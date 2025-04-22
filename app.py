@@ -259,7 +259,7 @@ if st.session_state.pdf_loaded:
             if page_images:
                 for page_num, img_bytes in page_images:
                     st.subheader(f"Página {page_num}")
-                    st.image(img_bytes, use_column_width=True)
+                    st.image(img_bytes, use_container_width=True)
             else:
                 st.info("Não foi possível renderizar as páginas referenciadas.")
         else:
