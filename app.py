@@ -6,6 +6,7 @@ import validators
 from dotenv import load_dotenv
 from pdf_service import PDFService
 from gemini_service import GeminiService
+import re
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -109,6 +110,42 @@ def process_pdf(option, file_upload=None, url=None):
             st.error(f"Erro ao processar o documento: {str(e)}")
             return False
 
+# Função para processar as buscas sugeridas
+def process_suggested_search(search_term):
+    """Processa uma busca sugerida pelo modelo e retorna o resultado."""
+    if not st.session_state.gemini_service.has_active_cache():
+        return None
+    
+    try:
+        # Formatar a busca como uma consulta específica para referência cruzada
+        query = f"Forneça um resumo claro e bem formatado sobre {search_term} mencionado no documento. Não cole o texto bruto do documento, mas sim explique o conteúdo de forma organizada e legível."
+        
+        # Consultar o Gemini (sem incluir todo o histórico para evitar confusão de contexto)
+        response_data = st.session_state.gemini_service.query_document(query)
+        
+        # Extrair resposta e metadados
+        result = response_data.get("result", {})
+        metadata = response_data.get("metadata", {})
+        
+        # Garantir que temos uma resposta textual
+        resposta_texto = result.get("resposta", "")
+        if not resposta_texto:
+            resposta_texto = f"Não foi possível encontrar detalhes específicos sobre {search_term} no documento."
+        
+        # Criar dados de resposta
+        search_result = {
+            "term": search_term,
+            "content": resposta_texto,
+            "pages": result.get("paginas_referencia", []),
+            "metadata": metadata
+        }
+        
+        return search_result
+    
+    except Exception as e:
+        print(f"Erro ao processar referência cruzada '{search_term}': {str(e)}")
+        return None
+
 # Função para processar as consultas
 def process_query(query):
     if not st.session_state.gemini_service.has_active_cache():
@@ -138,13 +175,42 @@ def process_query(query):
             if not resposta_texto:
                 resposta_texto = "Não foi possível obter uma resposta válida. Por favor, tente outra pergunta."
             
+            # Obter buscas sugeridas
+            buscas_sugeridas = result.get("buscas_sugeridas", [])
+            
             # Adicionar a resposta ao histórico
             st.session_state.chat_history.append({
                 "role": "assistant", 
                 "content": resposta_texto,
                 "pages": result.get("paginas_referencia", []),
-                "metadata": metadata
+                "metadata": metadata,
+                "buscas_sugeridas": buscas_sugeridas
             })
+            
+            # Processar automaticamente as buscas sugeridas
+            if buscas_sugeridas:
+                # Apenas mostrar que estamos processando (sem listar as referências individuais)
+                st.session_state.chat_history.append({
+                    "role": "system",
+                    "content": f"🔍 Analisando referências cruzadas no documento..."
+                })
+                
+                # Ir direto para o consolidado, sem processar cada referência individualmente
+                with st.spinner("Gerando análise das referências cruzadas..."):
+                    # Verificar se há referências suficientes para consolidar
+                    if len(buscas_sugeridas) > 0:
+                        # Gerar diretamente o consolidado incluindo a pergunta original
+                        summary_result = generate_cross_references_summary(buscas_sugeridas, query)
+                        
+                        if summary_result:
+                            # Adicionar o consolidado ao histórico
+                            st.session_state.chat_history.append({
+                                "role": "assistant",
+                                "content": summary_result['content'],
+                                "pages": summary_result['pages'],
+                                "metadata": summary_result['metadata'],
+                                "is_consolidated": True
+                            })
             
             # Forçar atualização da UI
             st.rerun()
@@ -159,6 +225,49 @@ def process_query(query):
 def start_new_chat():
     st.session_state.chat_history = []
     st.rerun()
+
+# Função para gerar um resumo consolidado das referências cruzadas
+def generate_cross_references_summary(buscas_sugeridas, pergunta_original):
+    """Gera um resumo consolidado de todas as referências cruzadas encontradas."""
+    if not buscas_sugeridas or len(buscas_sugeridas) == 0:
+        return None
+    
+    try:
+        # Formatar a consulta para pedir um consolidado, incluindo a pergunta original como contexto
+        query = f"""Com base na pergunta "{pergunta_original}", analise as seguintes referências do documento e forneça um resumo consolidado: {', '.join(buscas_sugeridas)}. 
+        
+        Importante:
+        1. NÃO reproduza o texto bruto do documento
+        2. Explique o significado e a importância dessas referências de forma clara e organizada
+        3. Como elas se relacionam entre si no contexto da pergunta original
+        4. Qual a conclusão ou entendimento geral que se pode extrair dessas referências em conjunto
+        5. Organize sua resposta em parágrafos curtos e bem formatados
+        """
+        
+        # Consultar o Gemini
+        response_data = st.session_state.gemini_service.query_document(query)
+        
+        # Extrair resposta e metadados
+        result = response_data.get("result", {})
+        metadata = response_data.get("metadata", {})
+        
+        # Garantir que temos uma resposta textual
+        resposta_texto = result.get("resposta", "")
+        if not resposta_texto:
+            resposta_texto = "Não foi possível gerar um resumo consolidado das referências."
+        
+        # Criar dados de resposta
+        summary_result = {
+            "content": resposta_texto,
+            "pages": result.get("paginas_referencia", []),
+            "metadata": metadata
+        }
+        
+        return summary_result
+    
+    except Exception as e:
+        print(f"Erro ao gerar resumo consolidado: {str(e)}")
+        return None
 
 # Interface do Streamlit
 st.title("📚 Consulta Legal - Documentos PDF com IA")
@@ -255,13 +364,23 @@ if st.session_state.api_key and st.session_state.pdf_loaded:
                     st.chat_message("user").write(message["content"])
                 elif message["role"] == "assistant":
                     with st.chat_message("assistant"):
+                        # Verificar se é uma busca relacionada
+                        is_related = message.get("is_related_search", False)
+                        
                         # Garantir que o conteúdo nunca está vazio
                         content = message.get("content", "")
                         if not content:
                             content = "Não foi possível obter uma resposta. Por favor, tente outra pergunta."
                         
-                        # Exibir a resposta
-                        st.markdown(content)
+                        # Exibir a resposta com estilo diferente para buscas relacionadas
+                        if is_related:
+                            with st.container():
+                                st.info(content)
+                        elif message.get("is_consolidated", False):
+                            with st.container():
+                                st.success(content)
+                        else:
+                            st.markdown(content)
                         
                         # Exibir páginas de referência
                         if message.get("pages"):
@@ -281,7 +400,7 @@ if st.session_state.api_key and st.session_state.pdf_loaded:
         query = st.chat_input("Digite sua pergunta sobre o documento...")
         if query:
             process_query(query)
-    
+
     # Coluna de visualização das páginas
     with col2:
         st.subheader("Visualização de Páginas")

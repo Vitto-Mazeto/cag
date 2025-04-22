@@ -13,6 +13,7 @@ load_dotenv()
 class LegalResponse(BaseModel):
     resposta: str = Field(..., description="Resposta textual à pergunta")
     paginas_referencia: List[int] = Field(default_factory=list, description="Números das páginas de referência")
+    buscas_sugeridas: List[str] = Field(default_factory=list, description="Termos ou artigos relacionados para busca adicional")
 
 class GeminiService:
     def __init__(self, api_key=None):
@@ -23,9 +24,15 @@ class GeminiService:
         self.cache = None
         self.cache_name = None
         self.system_instruction = (
-            'Você é um especialista em análise de documentos. '
+            'Você é um especialista em análise de documentos jurídicos. '
             'Sua função é responder perguntas com base no conteúdo do documento, '
             'citando sempre os números das páginas de referência para cada informação. '
+            'Além disso, identifique de 0 a 3 referências cruzadas no documento que são mencionadas '
+            'na resposta atual. Por exemplo, se sua resposta menciona um "Artigo 5º" ou uma "Cláusula X" '
+            'ou remete a "Anexo Y" ou "Seção Z" do mesmo documento, inclua essas referências para busca '
+            'adicional. Não inclua termos genéricos, apenas referências específicas a outras partes do '
+            'documento que são citadas ou relacionadas à resposta atual. '
+            'Se não houver referências cruzadas, retorne uma lista vazia. '
             'Se não encontrar a informação no documento, informe claramente que a informação '
             'não foi encontrada e não faça suposições.'
         )
@@ -95,6 +102,8 @@ class GeminiService:
                     result['resposta'] = raw_text
                 if 'paginas_referencia' not in result:
                     result['paginas_referencia'] = []
+                if 'buscas_sugeridas' not in result:
+                    result['buscas_sugeridas'] = []
                 
             except Exception as e:
                 print(f"Erro ao processar JSON: {str(e)}")
@@ -104,13 +113,15 @@ class GeminiService:
                     text_content = response.candidates[0].content.parts[0].text
                     result = {
                         "resposta": text_content or raw_text or "Não foi possível obter uma resposta válida.",
-                        "paginas_referencia": []
+                        "paginas_referencia": [],
+                        "buscas_sugeridas": []
                     }
                 else:
                     # Fallback para o texto bruto
                     result = {
                         "resposta": raw_text or "Não foi possível obter uma resposta válida.",
-                        "paginas_referencia": []
+                        "paginas_referencia": [],
+                        "buscas_sugeridas": []
                     }
             
             # Verificação adicional para garantir que resposta não seja vazia
@@ -157,8 +168,14 @@ class GeminiService:
                 role = "Usuário" if msg["role"] == "user" else "Assistente"
                 formatted_context += f"{role}: {msg['content']}\n\n"
             
-            # Adicionar a pergunta atual
-            full_prompt = f"{formatted_context}Usuário: {prompt}\n\nAssistente:"
+            # Adicionar a pergunta atual com instruções para buscas sugeridas
+            full_prompt = (
+                f"{formatted_context}Usuário: {prompt}\n\n"
+                f"Assistente: (Responda à pergunta e identifique de 0 a 3 referências cruzadas específicas no documento "
+                f"como artigos, cláusulas, seções ou anexos que são mencionados na sua resposta ou diretamente relacionados. "
+                f"Inclua apenas referências explícitas a outras partes do documento, não termos genéricos. "
+                f"Deixe a lista vazia se não houver referências cruzadas relevantes.)"
+            )
             
             # Fazer a consulta ao modelo com o contexto completo
             response = self.client.models.generate_content(
@@ -186,6 +203,8 @@ class GeminiService:
                     result['resposta'] = raw_text
                 if 'paginas_referencia' not in result:
                     result['paginas_referencia'] = []
+                if 'buscas_sugeridas' not in result:
+                    result['buscas_sugeridas'] = []
                 
             except Exception as e:
                 print(f"Erro ao processar JSON: {str(e)}")
@@ -195,13 +214,15 @@ class GeminiService:
                     text_content = response.candidates[0].content.parts[0].text
                     result = {
                         "resposta": text_content or raw_text or "Não foi possível obter uma resposta válida.",
-                        "paginas_referencia": []
+                        "paginas_referencia": [],
+                        "buscas_sugeridas": []
                     }
                 else:
                     # Fallback para o texto bruto
                     result = {
                         "resposta": raw_text or "Não foi possível obter uma resposta válida.",
-                        "paginas_referencia": []
+                        "paginas_referencia": [],
+                        "buscas_sugeridas": []
                     }
             
             # Verificação adicional para garantir que resposta não seja vazia
