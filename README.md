@@ -10,6 +10,7 @@ Uma aplicação Streamlit que permite carregar documentos PDF e fazer perguntas 
 - 🔍 Visualização das páginas referenciadas nas respostas
 - 📊 Métricas de uso de tokens
 - ⏱️ Gerenciamento do tempo de vida do cache
+- 🔑 Bring Your Own API Key - cada usuário utiliza sua própria chave da API Gemini
 
 ## 🚀 Instalação
 
@@ -26,12 +27,6 @@ cd [NOME_DO_DIRETÓRIO]
 pip install -r requirements.txt
 ```
 
-3. Crie um arquivo `.env` na raiz do projeto e adicione sua chave API do Gemini:
-
-```
-GEMINI_API_KEY=sua_chave_aqui
-```
-
 ## 🏃‍♂️ Como executar
 
 Execute a aplicação Streamlit:
@@ -44,23 +39,27 @@ A aplicação estará disponível em `http://localhost:8501`.
 
 ## 📖 Como usar
 
-1. Carregue um documento PDF usando uma das opções:
+1. Insira sua chave da API Gemini no campo apropriado na barra lateral.
+
+   - Você pode obter uma chave em https://ai.google.dev/
+
+2. Carregue um documento PDF usando uma das opções:
 
    - Upload de arquivo local
    - URL de um documento PDF online
 
-2. Após o documento ser carregado e cacheado, faça perguntas no chat.
+3. Após o documento ser carregado e cacheado, faça perguntas no chat.
 
-3. A aplicação responderá baseando-se no conteúdo do documento e mostrará:
+4. A aplicação responderá baseando-se no conteúdo do documento e mostrará:
 
    - A resposta textual
    - Os números das páginas referenciadas
    - Visualização das páginas referenciadas
    - Métricas de uso de tokens (incluindo economia pelo cache)
 
-4. Continue a conversa sobre o documento - todas as consultas usarão o mesmo cache.
+5. Continue a conversa sobre o documento - todas as consultas usarão o mesmo cache.
 
-5. O cache tem duração de 1 hora por padrão, mas pode ser renovado através do botão na interface.
+6. O cache tem duração de 1 hora por padrão, mas pode ser renovado através do botão na interface.
 
 ## 🛠️ Estrutura do projeto
 
@@ -68,7 +67,6 @@ A aplicação estará disponível em `http://localhost:8501`.
 - `gemini_service.py` - Serviço para gerenciar o cache do Gemini e as consultas
 - `pdf_service.py` - Serviço para processamento de PDFs (download, renderização)
 - `requirements.txt` - Dependências do projeto
-- `.env` - Arquivo para configuração da API key (local, não comitado)
 
 ## 📋 Requisitos
 
@@ -82,3 +80,4 @@ A aplicação estará disponível em `http://localhost:8501`.
 - Quanto maior o documento PDF, mais tokens serão usados no carregamento inicial
 - As páginas visualizadas são renderizadas diretamente do PDF
 - A aplicação economiza tokens em consultas subsequentes usando o recurso de cache do Gemini
+- Cada usuário precisa fornecer sua própria chave da API Gemini

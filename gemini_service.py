@@ -9,17 +9,16 @@ from pydantic import BaseModel, Field
 # Carrega variáveis de ambiente
 load_dotenv()
 
-# Configuração do modelo e API key
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-
 # Classe para a resposta estruturada
 class LegalResponse(BaseModel):
     resposta: str = Field(..., description="Resposta textual à pergunta")
     paginas_referencia: List[int] = Field(default_factory=list, description="Números das páginas de referência")
 
 class GeminiService:
-    def __init__(self):
-        self.client = genai.Client(api_key=GEMINI_API_KEY)
+    def __init__(self, api_key=None):
+        # Usa a API key fornecida ou tenta obter do ambiente
+        self.api_key = api_key
+        self.client = genai.Client(api_key=self.api_key)
         self.model_name = 'gemini-2.0-flash-001'  # Modelo com suporte a cache
         self.cache = None
         self.cache_name = None

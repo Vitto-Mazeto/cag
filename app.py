@@ -10,11 +10,6 @@ from gemini_service import GeminiService
 # Carregar variáveis de ambiente
 load_dotenv()
 
-# Verificar se a API KEY está configurada
-if not os.getenv('GEMINI_API_KEY'):
-    st.error("⚠️ GEMINI_API_KEY não encontrada! Crie um arquivo .env com sua chave.")
-    st.stop()
-
 # Configurar a página do Streamlit
 st.set_page_config(
     page_title="Consulta Legal - Documentos PDF com IA",
@@ -22,18 +17,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Inicializar serviços
-@st.cache_resource
-def get_pdf_service():
-    return PDFService()
-
-@st.cache_resource
-def get_gemini_service():
-    return GeminiService()
-
-pdf_service = get_pdf_service()
-gemini_service = get_gemini_service()
 
 # Inicializar estado da sessão, se necessário
 if "chat_history" not in st.session_state:
@@ -44,9 +27,36 @@ if "pdf_name" not in st.session_state:
     st.session_state.pdf_name = None
 if "cache_info" not in st.session_state:
     st.session_state.cache_info = None
+if "api_key" not in st.session_state:
+    st.session_state.api_key = None
+if "services_initialized" not in st.session_state:
+    st.session_state.services_initialized = False
+
+# Inicializar serviços
+@st.cache_resource
+def get_pdf_service():
+    return PDFService()
+
+def get_gemini_service(api_key):
+    return GeminiService(api_key=api_key)
+
+pdf_service = get_pdf_service()
+
+# Inicializar o serviço Gemini apenas quando a API key estiver disponível
+def initialize_services(api_key):
+    if api_key and not st.session_state.services_initialized:
+        st.session_state.gemini_service = get_gemini_service(api_key)
+        st.session_state.services_initialized = True
+        return True
+    return st.session_state.services_initialized
 
 # Função para processar o PDF (upload ou URL)
 def process_pdf(option, file_upload=None, url=None):
+    # Verificar se a API key está configurada
+    if not st.session_state.api_key or not st.session_state.services_initialized:
+        st.error("Por favor, configure sua chave da API Gemini primeiro!")
+        return False
+        
     with st.spinner("Processando documento..."):
         try:
             if option == "upload" and file_upload:
@@ -80,7 +90,7 @@ def process_pdf(option, file_upload=None, url=None):
             
             # Criar cache para o PDF no Gemini
             with st.spinner("Criando cache do documento no Gemini..."):
-                cache_info = gemini_service.create_cache_for_pdf(
+                cache_info = st.session_state.gemini_service.create_cache_for_pdf(
                     pdf_bytes,
                     display_name=f"pdf_cache_{int(time.time())}",
                     ttl="3600s"  # 1 hora
@@ -101,7 +111,7 @@ def process_pdf(option, file_upload=None, url=None):
 
 # Função para processar as consultas
 def process_query(query):
-    if not gemini_service.has_active_cache():
+    if not st.session_state.gemini_service.has_active_cache():
         st.error("Nenhum documento carregado! Por favor, carregue um documento primeiro.")
         return
     
@@ -111,7 +121,7 @@ def process_query(query):
         
         # Consultar o Gemini
         with st.spinner("Consultando o documento..."):
-            response_data = gemini_service.query_document(query)
+            response_data = st.session_state.gemini_service.query_document(query)
             
             # Extrair resposta e metadados
             result = response_data.get("result", {})
@@ -145,59 +155,77 @@ def process_query(query):
 # Interface do Streamlit
 st.title("📚 Consulta Legal - Documentos PDF com IA")
 
-# Sidebar para carregar documento
+# Sidebar para configuração da API e carregamento de documentos
 with st.sidebar:
-    st.header("Carregar Documento")
+    st.header("Configuração")
     
-    # Opções para carregar o documento
-    option = st.radio("Escolha como carregar o documento:", ["upload", "url"])
+    # Campo para inserção da API key do Gemini
+    api_key = st.text_input("Insira sua chave da API Gemini:", 
+                           type="password", 
+                           help="Você precisa de uma chave da API Gemini para usar este aplicativo. Obtenha uma em: https://ai.google.dev/")
     
-    if option == "upload":
-        file_upload = st.file_uploader("Enviar arquivo PDF:", type=["pdf"])
-        if file_upload:
-            if st.button("Processar documento enviado"):
-                process_pdf("upload", file_upload=file_upload)
+    if api_key:
+        st.session_state.api_key = api_key
+        if initialize_services(api_key):
+            st.success("API key configurada com sucesso!")
+        else:
+            st.error("Erro ao configurar a API key.")
+    else:
+        st.warning("⚠️ Você precisa fornecer uma chave da API Gemini para usar este aplicativo.")
     
-    elif option == "url":
-        url = st.text_input("URL do documento PDF:")
-        if url:
-            if st.button("Baixar e processar PDF"):
-                process_pdf("url", url=url)
-    
-    # Exibir informações do cache se existir
-    if st.session_state.cache_info:
+    if st.session_state.api_key:
         st.divider()
-        st.subheader("Informações do Cache")
-        expiry = st.session_state.cache_info.get("expire_time", "")
-        if expiry:
-            try:
-                # Converter para datetime se for string
-                if isinstance(expiry, str):
-                    expiry = datetime.fromisoformat(expiry.replace('Z', '+00:00'))
-                
-                # Calcular tempo restante
-                now = datetime.now().astimezone()
-                remaining = expiry - now
-                if remaining.total_seconds() > 0:
-                    minutes, seconds = divmod(remaining.total_seconds(), 60)
-                    st.info(f"Cache expira em: {int(minutes)}m {int(seconds)}s")
-                else:
-                    st.warning("Cache expirado!")
-            except:
-                st.info(f"Data de expiração: {expiry}")
+        st.header("Carregar Documento")
         
-        # Botão para renovar o cache
-        if st.button("Renovar Cache (+ 1 hora)"):
-            try:
-                gemini_service.update_cache_ttl("3600s")
-                st.success("Cache renovado por mais 1 hora!")
-                # Atualizar informações do cache
-                # (Numa implementação completa, seria necessário obter as novas informações do cache)
-            except Exception as e:
-                st.error(f"Erro ao renovar cache: {str(e)}")
+        # Opções para carregar o documento
+        option = st.radio("Escolha como carregar o documento:", ["upload", "url"])
+        
+        if option == "upload":
+            file_upload = st.file_uploader("Enviar arquivo PDF:", type=["pdf"])
+            if file_upload:
+                if st.button("Processar documento enviado"):
+                    process_pdf("upload", file_upload=file_upload)
+        
+        elif option == "url":
+            url = st.text_input("URL do documento PDF:")
+            if url:
+                if st.button("Baixar e processar PDF"):
+                    process_pdf("url", url=url)
+        
+        # Exibir informações do cache se existir
+        if st.session_state.cache_info:
+            st.divider()
+            st.subheader("Informações do Cache")
+            expiry = st.session_state.cache_info.get("expire_time", "")
+            if expiry:
+                try:
+                    # Converter para datetime se for string
+                    if isinstance(expiry, str):
+                        expiry = datetime.fromisoformat(expiry.replace('Z', '+00:00'))
+                    
+                    # Calcular tempo restante
+                    now = datetime.now().astimezone()
+                    remaining = expiry - now
+                    if remaining.total_seconds() > 0:
+                        minutes, seconds = divmod(remaining.total_seconds(), 60)
+                        st.info(f"Cache expira em: {int(minutes)}m {int(seconds)}s")
+                    else:
+                        st.warning("Cache expirado!")
+                except:
+                    st.info(f"Data de expiração: {expiry}")
+            
+            # Botão para renovar o cache
+            if st.button("Renovar Cache (+ 1 hora)"):
+                try:
+                    st.session_state.gemini_service.update_cache_ttl("3600s")
+                    st.success("Cache renovado por mais 1 hora!")
+                    # Atualizar informações do cache
+                    # (Numa implementação completa, seria necessário obter as novas informações do cache)
+                except Exception as e:
+                    st.error(f"Erro ao renovar cache: {str(e)}")
 
 # Container principal para o chat
-if st.session_state.pdf_loaded:
+if st.session_state.api_key and st.session_state.pdf_loaded:
     # Layout de duas colunas
     col1, col2 = st.columns([7, 3])
     
@@ -264,38 +292,38 @@ if st.session_state.pdf_loaded:
                 st.info("Não foi possível renderizar as páginas referenciadas.")
         else:
             st.info("Faça uma pergunta para ver as páginas referenciadas aqui.")
+elif not st.session_state.api_key:
+    st.info("👆 Por favor, insira sua chave da API Gemini na barra lateral para começar.")
+elif not st.session_state.pdf_loaded:
+    st.info("👆 Por favor, carregue um documento PDF na barra lateral para começar.")
 
-else:
-    # Mensagem para guiar o usuário a carregar um documento
-    st.info("👈 Comece carregando um documento PDF no painel lateral.")
-    
-    # Exemplos de perguntas que podem ser feitas
-    with st.expander("Exemplos de perguntas que você pode fazer após carregar um documento"):
-        st.markdown("""
-        - Qual o conteúdo principal deste documento?
-        - Resuma o capítulo sobre X.
-        - Explique o que diz o documento sobre Y.
-        - Quais são os pontos principais da seção Z?
-        - O que este documento fala sobre [termo específico]?
-        """)
-    
-    # Informações sobre a aplicação
-    st.divider()
+# Exemplos de perguntas que podem ser feitas
+with st.expander("Exemplos de perguntas que você pode fazer após carregar um documento"):
     st.markdown("""
-    ### Sobre esta aplicação
-    
-    Esta aplicação permite carregar documentos PDF e fazer perguntas sobre seu conteúdo usando a API Gemini.
-    
-    **Recursos:**
-    - Carregue documentos por upload ou URL
-    - Cache inteligente que economiza tokens em consultas subsequentes
-    - Chat interativo com contexto mantido
-    - Visualização das páginas referenciadas nas respostas
-    - Métricas de uso de tokens
-    
-    **Como utilizar:**
-    1. Carregue um documento PDF
-    2. Faça perguntas no chat
-    3. Veja a resposta com as páginas referenciadas
-    4. Continue a conversa sobre o documento
-    """) 
+    - Qual o conteúdo principal deste documento?
+    - Resuma o capítulo sobre X.
+    - Explique o que diz o documento sobre Y.
+    - Quais são os pontos principais da seção Z?
+    - O que este documento fala sobre [termo específico]?
+    """)
+
+# Informações sobre a aplicação
+st.divider()
+st.markdown("""
+### Sobre esta aplicação
+
+Esta aplicação permite carregar documentos PDF e fazer perguntas sobre seu conteúdo usando a API Gemini.
+
+**Recursos:**
+- Carregue documentos por upload ou URL
+- Cache inteligente que economiza tokens em consultas subsequentes
+- Chat interativo com contexto mantido
+- Visualização das páginas referenciadas nas respostas
+- Métricas de uso de tokens
+
+**Como utilizar:**
+1. Carregue um documento PDF
+2. Faça perguntas no chat
+3. Veja a resposta com as páginas referenciadas
+4. Continue a conversa sobre o documento
+""") 
