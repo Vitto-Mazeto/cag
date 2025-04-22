@@ -119,9 +119,12 @@ def process_query(query):
         # Adicionar a pergunta ao histórico
         st.session_state.chat_history.append({"role": "user", "content": query})
         
-        # Consultar o Gemini
+        # Consultar o Gemini com contexto
         with st.spinner("Consultando o documento..."):
-            response_data = st.session_state.gemini_service.query_document(query)
+            response_data = st.session_state.gemini_service.query_document_with_context(
+                query, 
+                st.session_state.chat_history
+            )
             
             # Extrair resposta e metadados
             result = response_data.get("result", {})
@@ -151,6 +154,11 @@ def process_query(query):
         st.session_state.chat_history.append({"role": "system", "content": f"Erro: {str(e)}"})
         # Forçar atualização da UI em caso de erro
         st.rerun()
+
+# Função para iniciar um novo chat
+def start_new_chat():
+    st.session_state.chat_history = []
+    st.rerun()
 
 # Interface do Streamlit
 st.title("📚 Consulta Legal - Documentos PDF com IA")
@@ -231,7 +239,13 @@ if st.session_state.api_key and st.session_state.pdf_loaded:
     
     # Coluna do chat
     with col1:
-        st.subheader(f"Chat sobre: {st.session_state.pdf_name}")
+        # Adicionar o botão "Novo Chat" na parte superior
+        col_title, col_button = st.columns([4, 1])
+        with col_title:
+            st.subheader(f"Chat sobre: {st.session_state.pdf_name}")
+        with col_button:
+            if st.button("🔄 Novo Chat"):
+                start_new_chat()
         
         # Exibir histórico do chat
         chat_container = st.container()

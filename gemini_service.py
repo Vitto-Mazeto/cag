@@ -133,6 +133,97 @@ class GeminiService:
         except Exception as e:
             raise Exception(f"Erro ao consultar o documento: {str(e)}")
     
+    def query_document_with_context(self, prompt: str, chat_history: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Consulta o documento usando o cache atual e mantendo o contexto das mensagens anteriores.
+        
+        Args:
+            prompt: A pergunta atual do usuário
+            chat_history: Lista de mensagens anteriores no formato [{"role": "user/assistant", "content": "..."}]
+            
+        Returns:
+            Dicionário com a resposta e metadados
+        """
+        if not self.cache_name:
+            raise Exception("Nenhum cache foi criado. Carregue um documento primeiro.")
+        
+        try:
+            # Construir o contexto a partir do histórico (últimas 10 mensagens para evitar tokens excessivos)
+            context_messages = chat_history[-10:] if len(chat_history) > 10 else chat_history
+            
+            # Formatar o contexto para o Gemini
+            formatted_context = ""
+            for msg in context_messages:
+                role = "Usuário" if msg["role"] == "user" else "Assistente"
+                formatted_context += f"{role}: {msg['content']}\n\n"
+            
+            # Adicionar a pergunta atual
+            full_prompt = f"{formatted_context}Usuário: {prompt}\n\nAssistente:"
+            
+            # Fazer a consulta ao modelo com o contexto completo
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    cached_content=self.cache_name,
+                    response_mime_type='application/json',
+                    response_schema=LegalResponse,
+                    temperature=0.2,
+                )
+            )
+            
+            # Processar a resposta da mesma forma que no método query_document
+            raw_text = response.text
+            print(f"Resposta bruta do modelo com contexto: {raw_text}")
+            
+            # Extrair a resposta estruturada
+            try:
+                # Tentar processar como JSON
+                result = json.loads(raw_text)
+                
+                # Garantir que temos os campos esperados
+                if 'resposta' not in result:
+                    result['resposta'] = raw_text
+                if 'paginas_referencia' not in result:
+                    result['paginas_referencia'] = []
+                
+            except Exception as e:
+                print(f"Erro ao processar JSON: {str(e)}")
+                # Verificar se há texto na resposta
+                if hasattr(response, 'candidates') and response.candidates:
+                    # Extrair texto diretamente dos candidatos se disponível
+                    text_content = response.candidates[0].content.parts[0].text
+                    result = {
+                        "resposta": text_content or raw_text or "Não foi possível obter uma resposta válida.",
+                        "paginas_referencia": []
+                    }
+                else:
+                    # Fallback para o texto bruto
+                    result = {
+                        "resposta": raw_text or "Não foi possível obter uma resposta válida.",
+                        "paginas_referencia": []
+                    }
+            
+            # Verificação adicional para garantir que resposta não seja vazia
+            if not result.get('resposta'):
+                result['resposta'] = "O modelo retornou uma resposta vazia. Por favor, reformule sua pergunta."
+            
+            # Adicionar metadados de uso
+            metadata = {
+                "total_tokens": response.usage_metadata.total_token_count,
+                "cached_tokens": response.usage_metadata.cached_content_token_count,
+                "prompt_tokens": response.usage_metadata.prompt_token_count,
+                "response_tokens": response.usage_metadata.candidates_token_count
+            }
+            
+            return {
+                "result": result,
+                "metadata": metadata
+            }
+            
+        except Exception as e:
+            raise Exception(f"Erro ao consultar o documento com contexto: {str(e)}")
+    
     def update_cache_ttl(self, ttl="3600s"):
         """Atualiza o TTL do cache atual."""
         if not self.cache_name:
